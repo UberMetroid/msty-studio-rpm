@@ -1,0 +1,161 @@
+name: Build Msty Studio RPM
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version of Msty Studio to build (e.g., 2.6.4)'
+        required: true
+        default: '2.6.4'
+      deb_url:
+        description: 'Direct download URL for the .deb file'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm
+          sudo gem install --no-document fpm
+
+      - name: Download DEB package
+        run: |
+          mkdir -p workspace/msty_source
+          wget -q "${{ github.event.inputs.deb_url }}" -O workspace/msty.deb
+          cd workspace/msty_source
+          ar x ../msty.deb
+          tar -xf data.tar.xz
+
+      - name: Create Post-Install Script
+        run: |
+          cat << 'EOF' > workspace/postinst.sh
+          #!/bin/bash
+          ln -sf /opt/MstyStudio/MstyStudio /usr/bin/MstyStudio
+          update-desktop-database /usr/share/applications &> /dev/null || :
+          update-mime-database /usr/share/mime &> /dev/null || :
+          if ! { [[ -L /proc/self/ns/user ]] && unshare --user true; }; then
+              chmod 4755 '/opt/MstyStudio/chrome-sandbox' || true
+          else
+              chmod 0755 '/opt/MstyStudio/chrome-sandbox' || true
+          fi
+          EOF
+          chmod +x workspace/postinst.sh
+
+      - name: Create AppStream Metadata and Desktop File
+        run: |
+          mkdir -p workspace/msty_source/usr/share/metainfo
+          cat << 'EOF' > workspace/msty_source/usr/share/metainfo/ai.msty.mstystudio.metainfo.xml
+          <?xml version="1.0" encoding="UTF-8"?>
+          <component type="desktop-application">
+            <id>ai.msty.mstystudio</id>
+            <metadata_license>CC0-1.0</metadata_license>
+            <project_license>Proprietary</project_license>
+            <name>Msty Studio</name>
+            <developer_name>Msty AI</developer_name>
+            <summary>Privacy-first, all-in-one AI studio for advanced workflows</summary>
+            <description>
+              <p>Msty is an all-in-one AI studio designed for privacy, flexibility, and advanced workflows. It allows you to seamlessly switch between local models and top online providers within the same chat.</p>
+              <ul>
+                <li>Privacy First: Zero telemetry and local storage for all chats and models.</li>
+                <li>Hybrid Architecture: Run local models (Ollama/MLX) or connect to Azure, AWS Bedrock, and more.</li>
+                <li>Advanced Tools: Integrated Web Search, RAG (Knowledge Stacks), and MCP tool support.</li>
+                <li>Studios: Dedicated interfaces for Personas, Prompts, and Workflow automation.</li>
+              </ul>
+            </description>
+            <launchable type="desktop-id">ai.msty.mstystudio.desktop</launchable>
+            <url type="homepage">https://msty.ai/</url>
+            <url type="bugtracker">https://msty.ai/contact</url>
+            <url type="help">https://docs.msty.ai/</url>
+            <screenshots>
+              <screenshot type="default">
+                <caption>The main Msty Studio interface showing a chat with a hybrid model.</caption>
+                <image>https://msty.ai/assets/images/hero-image.png</image>
+              </screenshot>
+            </screenshots>
+            <content_rating type="oars-1.1" />
+            <releases>
+              <release version="${{ github.event.inputs.version }}" date="$(date +%Y-%m-%d)" />
+            </releases>
+            <provides>
+              <binary>MstyStudio</binary>
+            </provides>
+            <categories>
+              <category>Utility</category>
+              <category>Development</category>
+              <category>ArtificialIntelligence</category>
+            </categories>
+          </component>
+          EOF
+
+          rm -f workspace/msty_source/usr/share/applications/MstyStudio.desktop
+          mkdir -p workspace/msty_source/usr/share/applications
+          cat << 'EOF' > workspace/msty_source/usr/share/applications/ai.msty.mstystudio.desktop
+          [Desktop Entry]
+          Name=Msty Studio
+          Exec=/opt/MstyStudio/MstyStudio %U
+          Terminal=false
+          Type=Application
+          Icon=MstyStudio
+          StartupWMClass=MstyStudio
+          Comment=Privacy-first AI studio
+          Categories=Utility;Development;
+          MimeType=x-scheme-handler/msty;
+          EOF
+
+      - name: Build RPM with FPM
+        run: |
+          cd workspace/msty_source
+          fpm -s dir -t rpm \
+            --name mstystudio \
+            --version "${{ github.event.inputs.version }}" \
+            --architecture x86_64 \
+            --vendor "Msty AI" \
+            --url "https://msty.ai" \
+            --description "Msty is a powerful, locally-focused AI studio that allows you to interact with various models, manage your local AI environment, and utilize specialized skills for a seamless AI experience." \
+            --rpm-summary "Privacy-first, all-in-one AI studio for advanced workflows" \
+            --depends gtk3 \
+            --depends libnotify \
+            --depends nss \
+            --depends libXScrnSaver \
+            --depends libXtst \
+            --depends xdg-utils \
+            --depends at-spi2-core \
+            --depends libuuid \
+            --depends libsecret \
+            --after-install ../postinst.sh \
+            --package ../mstystudio-${{ github.event.inputs.version }}-1.x86_64.rpm \
+            --force \
+            .
+
+      - name: Upload RPM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mstystudio-rpm-${{ github.event.inputs.version }}
+          path: workspace/*.rpm
+
+      # Optional: To automate publishing to Fedora Copr, you would add a step here
+      # that uses copr-cli and a secret token to build the package on their servers.
+      # Example:
+      # - name: Install copr-cli
+      #   run: sudo dnf install -y copr-cli
+      # - name: Push to Copr
+      #   env:
+      #     COPR_LOGIN: ${{ secrets.COPR_LOGIN }}
+      #     COPR_USERNAME: ${{ secrets.COPR_USERNAME }}
+      #     COPR_TOKEN: ${{ secrets.COPR_TOKEN }}
+      #   run: |
+      #     mkdir -p ~/.config
+      #     cat << EOF > ~/.config/copr
+      #     [copr-cli]
+      #     login = $COPR_LOGIN
+      #     username = $COPR_USERNAME
+      #     token = $COPR_TOKEN
+      #     copr_url = https://copr.fedorainfracloud.org
+      #     EOF
+      #     copr-cli build your-username/msty-studio workspace/*.rpm
