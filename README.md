@@ -1,4 +1,4 @@
-# UberMetroid: Msty Studio RPM Builder
+# Msty Studio RPM Builder (Community)
 
 This repository contains an automated GitHub Actions pipeline to convert Msty Studio `.deb` packages into Fedora-compatible `.rpm` packages using FPM.
 
