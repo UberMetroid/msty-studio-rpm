@@ -14,15 +14,15 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container: fedora:latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm
-          sudo gem install --no-document fpm
+          dnf install -y ruby-devel gcc make rpm-build rubygems binutils wget
+          gem install --no-document fpm
 
       - name: Download DEB package
         run: |
