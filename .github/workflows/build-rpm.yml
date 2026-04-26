@@ -12,6 +12,12 @@ on:
         description: 'Direct download URL for the .deb'
         required: false
 
+permissions:
+  contents: write
+  packages: write
+  pages: write
+  id-token: write
+
 jobs:
   check-version:
     runs-on: ubuntu-latest
@@ -26,29 +32,21 @@ jobs:
       - name: Check latest version
         id: check
         run: |
-          # Use a reliable way to get the latest deb link from the download page
-          # For Msty, we can often find it on the download page or via a known pattern
-          # For this example, we scrape the version from their changelog or download page
+          # Try to find the latest version from the website
+          # For Msty, the version is currently 2.6.4
+          VERSION_REMOTE="2.6.4"
           
-          LATEST_DEB_URL="https://msty.ai/downloads/MstyStudio_amd64.deb"
-          
-          # In a real scenario, we might use curl to find the exact redirect version
-          # Here we use a placeholder logic to detect version changes
-          # Msty typically uses a fixed name for the latest, so we check the 'Last-Modified' header or a version metadata if available
+          # Since the automated scraping is failing, we use the hardcoded current version
+          # but allow manual overrides to fix URLs
+          LATEST_DEB_URL="https://assets.msty.app/prod/latest/linux/amd64/Msty_amd64_amd64.deb"
           
           VERSION_LOCAL=$(cat version.txt)
-          
-          # This is a placeholder for the actual scraping logic
-          # For Msty, the version is currently 2.6.4
-          # We simulate a check:
-          VERSION_REMOTE="2.6.4" 
           
           if [ "$VERSION_REMOTE" != "$VERSION_LOCAL" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "new_version=${VERSION_REMOTE}" >> $GITHUB_OUTPUT
             echo "deb_url=${LATEST_DEB_URL}" >> $GITHUB_OUTPUT
             echo "should_build=true" >> $GITHUB_OUTPUT
             
-            # If manual, override with inputs
             if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
               if [ -n "${{ github.event.inputs.version }}" ]; then
                 echo "new_version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
@@ -78,7 +76,8 @@ jobs:
       - name: Download DEB package
         run: |
           mkdir -p workspace/msty_source
-          wget -q "${{ needs.check-version.outputs.deb_url }}" -O workspace/msty.deb
+          # Use a browser-like user agent to avoid being blocked
+          wget -q -U "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" "${{ needs.check-version.outputs.deb_url }}" -O workspace/msty.deb
           cd workspace/msty_source
           ar x ../msty.deb
           tar -xf data.tar.xz
@@ -229,26 +228,5 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./deploy
-          keep_files: true # This ensures Studio and Claw don't overwrite each other
+          keep_files: true
           publish_branch: gh-pages
-
-      # Optional: To automate publishing to Fedora Copr, you would add a step here
-      # that uses copr-cli and a secret token to build the package on their servers.
-      # Example:
-      # - name: Install copr-cli
-      #   run: sudo dnf install -y copr-cli
-      # - name: Push to Copr
-      #   env:
-      #     COPR_LOGIN: ${{ secrets.COPR_LOGIN }}
-      #     COPR_USERNAME: ${{ secrets.COPR_USERNAME }}
-      #     COPR_TOKEN: ${{ secrets.COPR_TOKEN }}
-      #   run: |
-      #     mkdir -p ~/.config
-      #     cat << EOF > ~/.config/copr
-      #     [copr-cli]
-      #     login = $COPR_LOGIN
-      #     username = $COPR_USERNAME
-      #     token = $COPR_TOKEN
-      #     copr_url = https://copr.fedorainfracloud.org
-      #     EOF
-      #     copr-cli build your-username/msty-studio workspace/*.rpm

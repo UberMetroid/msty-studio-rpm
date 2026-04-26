@@ -12,6 +12,12 @@ on:
         description: 'Direct download URL for the Claw .deb'
         required: false
 
+permissions:
+  contents: write
+  packages: write
+  pages: write
+  id-token: write
+
 jobs:
   check-version:
     runs-on: ubuntu-latest
@@ -26,12 +32,9 @@ jobs:
       - name: Check latest version
         id: check
         run: |
-          LATEST_DEB_URL="https://msty.ai/downloads/claw/MstyClaw_amd64.deb"
+          VERSION_REMOTE="1.0.0"
+          LATEST_DEB_URL="https://assets.msty.app/Msty_Claw_linux_cpu.deb"
           VERSION_LOCAL=$(cat version_claw.txt)
-          
-          # Placeholder for Claw version detection logic
-          # Claw is currently in early beta
-          VERSION_REMOTE="1.0.0" 
           
           if [ "$VERSION_REMOTE" != "$VERSION_LOCAL" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "new_version=${VERSION_REMOTE}" >> $GITHUB_OUTPUT
@@ -67,7 +70,7 @@ jobs:
       - name: Download DEB package
         run: |
           mkdir -p workspace/msty_source
-          wget -q "${{ needs.check-version.outputs.deb_url }}" -O workspace/msty.deb
+          wget -q -U "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" "${{ needs.check-version.outputs.deb_url }}" -O workspace/msty.deb
           cd workspace/msty_source
           ar x ../msty.deb
           tar -xf data.tar.xz
