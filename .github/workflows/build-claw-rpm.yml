@@ -1,0 +1,184 @@
+name: Build Msty Claw RPM
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version of Msty Claw (e.g., 1.0.0)'
+        required: false
+      deb_url:
+        description: 'Direct download URL for the Claw .deb'
+        required: false
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.check.outputs.new_version }}
+      deb_url: ${{ steps.check.outputs.deb_url }}
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check latest version
+        id: check
+        run: |
+          LATEST_DEB_URL="https://msty.ai/downloads/claw/MstyClaw_amd64.deb"
+          VERSION_LOCAL=$(cat version_claw.txt)
+          
+          # Placeholder for Claw version detection logic
+          # Claw is currently in early beta
+          VERSION_REMOTE="1.0.0" 
+          
+          if [ "$VERSION_REMOTE" != "$VERSION_LOCAL" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "new_version=${VERSION_REMOTE}" >> $GITHUB_OUTPUT
+            echo "deb_url=${LATEST_DEB_URL}" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            
+            if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+              if [ -n "${{ github.event.inputs.version }}" ]; then
+                echo "new_version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+              fi
+              if [ -n "${{ github.event.inputs.deb_url }}" ]; then
+                echo "deb_url=${{ github.event.inputs.deb_url }}" >> $GITHUB_OUTPUT
+              fi
+            fi
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          dnf install -y ruby-devel gcc make rpm-build rubygems binutils wget git
+          gem install --no-document fpm
+
+      - name: Download DEB package
+        run: |
+          mkdir -p workspace/msty_source
+          wget -q "${{ needs.check-version.outputs.deb_url }}" -O workspace/msty.deb
+          cd workspace/msty_source
+          ar x ../msty.deb
+          tar -xf data.tar.xz
+
+      - name: Create Post-Install Script
+        run: |
+          cat << 'EOF' > workspace/postinst.sh
+          #!/bin/bash
+          ln -sf /opt/MstyClaw/MstyClaw /usr/bin/MstyClaw
+          update-desktop-database /usr/share/applications &> /dev/null || :
+          update-mime-database /usr/share/mime &> /dev/null || :
+          if ! { [[ -L /proc/self/ns/user ]] && unshare --user true; }; then
+              chmod 4755 '/opt/MstyClaw/chrome-sandbox' || true
+          else
+              chmod 0755 '/opt/MstyClaw/chrome-sandbox' || true
+          fi
+          EOF
+          chmod +x workspace/postinst.sh
+
+      - name: Create AppStream Metadata and Desktop File
+        run: |
+          mkdir -p workspace/msty_source/usr/share/metainfo
+          cat << 'EOF' > workspace/msty_source/usr/share/metainfo/ai.msty.mstyclaw.metainfo.xml
+          <?xml version="1.0" encoding="UTF-8"?>
+          <component type="desktop-application">
+            <id>ai.msty.mstyclaw</id>
+            <metadata_license>CC0-1.0</metadata_license>
+            <project_license>Proprietary</project_license>
+            <name>Msty Claw</name>
+            <developer_name>Msty AI</developer_name>
+            <summary>Privacy-first agent execution environment</summary>
+            <description>
+              <p>Msty Claw is a privacy-first application specifically for agent-style execution. It allows AI agents to run on your machine with controlled folder access or isolated within Docker containers.</p>
+            </description>
+            <launchable type="desktop-id">ai.msty.mstyclaw.desktop</launchable>
+            <url type="homepage">https://msty.ai/claw</url>
+            <screenshots>
+              <screenshot type="default">
+                <image>https://msty.ai/assets/images/hero-image.png</image>
+              </screenshot>
+            </screenshots>
+            <content_rating type="oars-1.1" />
+            <releases>
+              <release version="${{ needs.check-version.outputs.new_version }}" date="$(date +%Y-%m-%d)" />
+            </releases>
+            <provides>
+              <binary>MstyClaw</binary>
+            </provides>
+            <categories>
+              <category>Utility</category>
+              <category>Development</category>
+            </categories>
+          </component>
+          EOF
+
+          mkdir -p workspace/msty_source/usr/share/applications
+          cat << 'EOF' > workspace/msty_source/usr/share/applications/ai.msty.mstyclaw.desktop
+          [Desktop Entry]
+          Name=Msty Claw
+          Exec=/opt/MstyClaw/MstyClaw %U
+          Terminal=false
+          Type=Application
+          Icon=MstyClaw
+          StartupWMClass=MstyClaw
+          Comment=Privacy-first AI Agent execution
+          Categories=Utility;Development;
+          EOF
+
+      - name: Build RPM with FPM
+        run: |
+          cd workspace/msty_source
+          fpm -s dir -t rpm \
+            --name mstyclaw \
+            --version "${{ needs.check-version.outputs.new_version }}" \
+            --architecture x86_64 \
+            --vendor "Msty AI" \
+            --url "https://msty.ai/claw" \
+            --description "Msty Claw is a privacy-first app specifically for agent-style execution." \
+            --rpm-summary "Privacy-first AI agent execution environment" \
+            --depends gtk3 \
+            --depends libnotify \
+            --depends nss \
+            --depends xdg-utils \
+            --depends at-spi2-core \
+            --depends libuuid \
+            --depends libsecret \
+            --after-install ../postinst.sh \
+            --package ../mstyclaw-${{ needs.check-version.outputs.new_version }}-1.x86_64.rpm \
+            --force \
+            .
+
+      - name: Update version tracking
+        if: github.event_name == 'schedule'
+        run: |
+          git config --global --add safe.directory /__w/msty-studio-rpm/msty-studio-rpm
+          git config user.email "jeryd@msty.ai"
+          git config user.name "Msty Bot"
+          echo "${{ needs.check-version.outputs.new_version }}" > version_claw.txt
+          git add version_claw.txt
+          git commit -m "Bump Claw version to ${{ needs.check-version.outputs.new_version }}"
+          git push
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: claw-v${{ needs.check-version.outputs.new_version }}
+          name: Msty Claw v${{ needs.check-version.outputs.new_version }}
+          files: workspace/*.rpm
+          body: |
+            Automated RPM build for Msty Claw v${{ needs.check-version.outputs.new_version }} (Beta).
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
