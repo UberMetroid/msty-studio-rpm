@@ -201,6 +201,24 @@ jobs:
           name: mstystudio-rpm-${{ needs.check-version.outputs.new_version }}
           path: workspace/*.rpm
 
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.new_version }}
+          name: Msty Studio v${{ needs.check-version.outputs.new_version }}
+          files: workspace/*.rpm
+          body: |
+            Automated RPM build for Msty Studio v${{ needs.check-version.outputs.new_version }}.
+            
+            **Installation:**
+            ```bash
+            sudo dnf install ./mstystudio-${{ needs.check-version.outputs.new_version }}-1.x86_64.rpm
+            ```
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # Optional: To automate publishing to Fedora Copr, you would add a step here
       # that uses copr-cli and a secret token to build the package on their servers.
       # Example:
