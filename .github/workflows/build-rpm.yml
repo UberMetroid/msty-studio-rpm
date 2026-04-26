@@ -209,15 +209,28 @@ jobs:
           files: workspace/*.rpm
           body: |
             Automated RPM build for Msty Studio v${{ needs.check-version.outputs.new_version }}.
-            
-            **Installation:**
-            ```bash
-            sudo dnf install ./mstystudio-${{ needs.check-version.outputs.new_version }}-1.x86_64.rpm
-            ```
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Repo Directory
+        run: |
+          mkdir -p deploy/x86_64
+          cp workspace/*.rpm deploy/x86_64/
+
+      - name: Generate Repository Metadata
+        run: |
+          dnf install -y createrepo_c
+          createrepo_c deploy/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deploy
+          keep_files: true # This ensures Studio and Claw don't overwrite each other
+          publish_branch: gh-pages
 
       # Optional: To automate publishing to Fedora Copr, you would add a step here
       # that uses copr-cli and a secret token to build the package on their servers.
