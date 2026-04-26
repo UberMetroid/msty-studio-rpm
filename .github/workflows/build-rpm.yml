@@ -1,18 +1,69 @@
 name: Build Msty Studio RPM
 
 on:
+  schedule:
+    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version of Msty Studio to build (e.g., 2.6.4)'
-        required: true
-        default: '2.6.4'
+        description: 'Version of Msty Studio (e.g., 2.6.4)'
+        required: false
       deb_url:
-        description: 'Direct download URL for the .deb file'
-        required: true
+        description: 'Direct download URL for the .deb'
+        required: false
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.check.outputs.new_version }}
+      deb_url: ${{ steps.check.outputs.deb_url }}
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check latest version
+        id: check
+        run: |
+          # Use a reliable way to get the latest deb link from the download page
+          # For Msty, we can often find it on the download page or via a known pattern
+          # For this example, we scrape the version from their changelog or download page
+          
+          LATEST_DEB_URL="https://msty.ai/downloads/MstyStudio_amd64.deb"
+          
+          # In a real scenario, we might use curl to find the exact redirect version
+          # Here we use a placeholder logic to detect version changes
+          # Msty typically uses a fixed name for the latest, so we check the 'Last-Modified' header or a version metadata if available
+          
+          VERSION_LOCAL=$(cat version.txt)
+          
+          # This is a placeholder for the actual scraping logic
+          # For Msty, the version is currently 2.6.4
+          # We simulate a check:
+          VERSION_REMOTE="2.6.4" 
+          
+          if [ "$VERSION_REMOTE" != "$VERSION_LOCAL" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "new_version=${VERSION_REMOTE}" >> $GITHUB_OUTPUT
+            echo "deb_url=${LATEST_DEB_URL}" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            
+            # If manual, override with inputs
+            if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+              if [ -n "${{ github.event.inputs.version }}" ]; then
+                echo "new_version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+              fi
+              if [ -n "${{ github.event.inputs.deb_url }}" ]; then
+                echo "deb_url=${{ github.event.inputs.deb_url }}" >> $GITHUB_OUTPUT
+              fi
+            fi
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
   build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
@@ -21,13 +72,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          dnf install -y ruby-devel gcc make rpm-build rubygems binutils wget
+          dnf install -y ruby-devel gcc make rpm-build rubygems binutils wget git
           gem install --no-document fpm
 
       - name: Download DEB package
         run: |
           mkdir -p workspace/msty_source
-          wget -q "${{ github.event.inputs.deb_url }}" -O workspace/msty.deb
+          wget -q "${{ needs.check-version.outputs.deb_url }}" -O workspace/msty.deb
           cd workspace/msty_source
           ar x ../msty.deb
           tar -xf data.tar.xz
@@ -80,7 +131,7 @@ jobs:
             </screenshots>
             <content_rating type="oars-1.1" />
             <releases>
-              <release version="${{ github.event.inputs.version }}" date="$(date +%Y-%m-%d)" />
+              <release version="${{ needs.check-version.outputs.new_version }}" date="$(date +%Y-%m-%d)" />
             </releases>
             <provides>
               <binary>MstyStudio</binary>
@@ -113,7 +164,7 @@ jobs:
           cd workspace/msty_source
           fpm -s dir -t rpm \
             --name mstystudio \
-            --version "${{ github.event.inputs.version }}" \
+            --version "${{ needs.check-version.outputs.new_version }}" \
             --architecture x86_64 \
             --vendor "Msty AI" \
             --url "https://msty.ai" \
@@ -129,14 +180,25 @@ jobs:
             --depends libuuid \
             --depends libsecret \
             --after-install ../postinst.sh \
-            --package ../mstystudio-${{ github.event.inputs.version }}-1.x86_64.rpm \
+            --package ../mstystudio-${{ needs.check-version.outputs.new_version }}-1.x86_64.rpm \
             --force \
             .
+
+      - name: Update version tracking
+        if: github.event_name == 'schedule'
+        run: |
+          git config --global --add safe.directory /__w/msty-studio-rpm/msty-studio-rpm
+          git config user.email "jeryd@msty.ai"
+          git config user.name "Msty Bot"
+          echo "${{ needs.check-version.outputs.new_version }}" > version.txt
+          git add version.txt
+          git commit -m "Bump version to ${{ needs.check-version.outputs.new_version }}"
+          git push
 
       - name: Upload RPM Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mstystudio-rpm-${{ github.event.inputs.version }}
+          name: mstystudio-rpm-${{ needs.check-version.outputs.new_version }}
           path: workspace/*.rpm
 
       # Optional: To automate publishing to Fedora Copr, you would add a step here
